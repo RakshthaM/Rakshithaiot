@@ -1,1 +1,88 @@
+#include <ESP8266WiFi.h>
+#include <WiFiClientSecure.h>
 
+// WiFi credentials
+const char* ssid = "vivo T2x 5G";
+const char* password = "sanumulla";
+
+// Firebase credentials
+const char* firebaseHost = "my-iot-project-fcc70-default-rtdb.firebaseio.com"; 
+const char* firebaseAuth = "AIzaSyCQMNkdAvSuy0RuHztikM3x3Tx_GmXZtAI"; 
+const int firebasePort = 443;
+
+// Pin Definitions
+#define IR_SENSOR_PIN 14
+#define RELAY_PIN 12
+#define MOTOR_PIN 13
+
+unsigned long lastSendTime = 0;
+const unsigned long sendInterval = 1000;
+
+int lastIRState = HIGH;
+
+void setup() {
+  Serial.begin(115200);
+
+  pinMode(IR_SENSOR_PIN, INPUT);
+  pinMode(RELAY_PIN, OUTPUT);
+  pinMode(MOTOR_PIN, OUTPUT);
+
+  digitalWrite(RELAY_PIN, LOW);
+  digitalWrite(MOTOR_PIN, LOW);
+
+  // Connect to WiFi
+  WiFi.begin(ssid, password);
+  Serial.print("Connecting to WiFi");
+  while (WiFi.status() != WL_CONNECTED) {
+    delay(500);
+    Serial.print(".");
+  }
+  Serial.println("\nWiFi connected!");
+  Serial.println("IP Address: ");
+  Serial.println(WiFi.localIP());
+}
+
+void loop() {
+  int irValue = digitalRead(IR_SENSOR_PIN); // LOW = object present
+
+  // Instant control
+  if (irValue == LOW && lastIRState != LOW) {
+    digitalWrite(RELAY_PIN, HIGH);
+    digitalWrite(MOTOR_PIN, HIGH);
+    Serial.println("Glass Detected → Motor + Relay ON");
+    lastIRState = LOW;
+  } else if (irValue == HIGH && lastIRState != HIGH) {
+    digitalWrite(RELAY_PIN, LOW);
+    digitalWrite(MOTOR_PIN, LOW);
+    Serial.println("No Glass → Motor + Relay OFF");
+    lastIRState = HIGH;
+  }
+
+  // Firebase Update every 1 second
+  if (millis() - lastSendTime >= sendInterval) {
+    lastSendTime = millis();
+
+    WiFiClientSecure client;
+    client.setInsecure();
+
+    String url = "/glassdetection.json?auth=" + String(firebaseAuth);
+    String jsonData = "{\"glass\":" + String(irValue == LOW ? 1 : 0) + "}";
+
+    if (client.connect(firebaseHost, firebasePort)) {
+      client.print(String("PUT ") + url + " HTTP/1.1\r\n" +
+                   "Host: " + firebaseHost + "\r\n" +
+                   "Content-Type: application/json\r\n" +
+                   "Content-Length: " + jsonData.length() + "\r\n\r\n" +
+                   jsonData);
+
+      // Optional: read Firebase response (skip this if not needed)
+      while (client.connected() && !client.available()) delay(1);
+      while (client.available()) client.read();
+      client.stop();
+    } else {
+      Serial.println("Firebase connection failed!");
+    }
+  }
+
+  delay(10); // Small delay to avoid CPU overload
+}
